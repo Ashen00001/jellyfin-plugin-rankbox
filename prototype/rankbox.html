@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RankBox</title>
+<style>
+:root{
+  --bg:#101014; --panel:#18181f; --panel2:#1f1f29; --line:#2b2b38;
+  --txt:#e8e8f0; --dim:#8b8b9e; --acc:#8b5cf6; --acc2:#00a4dc; --good:#4ade80;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 2px;letter-spacing:-.3px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.4px}
+input,select{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:8px;color:var(--txt);font-size:15px}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:11px 16px;
+  font-size:15px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt);font-weight:500}
+button.sm{padding:7px 12px;font-size:13px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.err{color:#f87171;font-size:13px;margin-top:8px;white-space:pre-wrap}
+.ok{color:var(--good);font-size:13px;margin-top:8px}
+.hide{display:none!important}
+
+/* tabs */
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.tab{padding:9px 14px;cursor:pointer;color:var(--dim);font-size:14px;border-bottom:2px solid transparent}
+.tab.on{color:var(--txt);border-bottom-color:var(--acc)}
+
+/* versus */
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch}
+.pick{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  cursor:pointer;display:flex;flex-direction:column;transition:border-color .12s,transform .12s}
+.pick:hover{border-color:var(--acc)}
+.pick:active{transform:scale(.985)}
+.pick img{width:100%;aspect-ratio:2/3;object-fit:cover;background:var(--panel2);display:block}
+.pick .meta{padding:10px}
+.pick .ttl{font-weight:600;font-size:14px;line-height:1.3}
+.pick .when{color:var(--dim);font-size:11px;margin-top:3px}
+.mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dim)}
+.mid .v{font-weight:700;font-size:13px;letter-spacing:1px}
+.kbd{font:11px ui-monospace,monospace;color:var(--dim);border:1px solid var(--line);
+  border-radius:4px;padding:1px 5px}
+.prompt{text-align:center;color:var(--dim);font-size:13px;margin:0 0 12px}
+.prompt b{color:var(--txt)}
+.bucket{display:inline-block;font-size:10px;padding:1px 6px;border-radius:99px;
+  border:1px solid var(--line);color:var(--dim);margin-top:5px}
+.bucket.recent{border-color:#7c3aed55;color:#a78bfa}
+.bucket.old{border-color:#0891b255;color:#67e8f9}
+
+/* list */
+ol.rank{list-style:none;margin:0;padding:0;counter-reset:r}
+ol.rank li{counter-increment:r;display:flex;gap:10px;align-items:center;padding:8px 10px;
+  border-bottom:1px solid var(--line)}
+ol.rank li:before{content:counter(r);color:var(--dim);font:600 13px ui-monospace,monospace;
+  min-width:24px;text-align:right}
+ol.rank img{width:34px;height:51px;object-fit:cover;border-radius:4px;background:var(--panel2)}
+ol.rank .n{flex:1;font-size:14px}
+ol.rank .c{color:var(--dim);font-size:11px}
+.stat{display:flex;gap:16px;color:var(--dim);font-size:12px;margin-bottom:12px;flex-wrap:wrap}
+.stat b{color:var(--txt)}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px;
+  overflow:auto;font-size:12px;max-height:300px}
+@media(max-width:560px){
+  .vs{grid-template-columns:1fr 1fr;gap:8px}
+  .mid{grid-column:1/-1;flex-direction:row;order:-1}
+  .pick .ttl{font-size:13px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>RankBox</h1>
+<div class="sub">Pairwise ranking for your Jellyfin library</div>
+
+<!-- ============ SETUP ============ -->
+<div id="setup">
+  <div class="card">
+    <label>Jellyfin server URL</label>
+    <input id="url" placeholder="http://192.168.1.50:8096" autocomplete="off" spellcheck="false">
+    <label>API key <span style="text-transform:none">(Dashboard → API Keys → +)</span></label>
+    <input id="key" placeholder="paste key" autocomplete="off" spellcheck="false">
+    <div class="row" style="margin-top:14px">
+      <button id="connect">Connect</button>
+      <button class="ghost" id="forget">Forget saved</button>
+    </div>
+    <div id="setupMsg"></div>
+  </div>
+
+  <div class="card hide" id="userCard">
+    <label>Profile</label>
+    <select id="user"></select>
+    <label>Include</label>
+    <div class="row" style="gap:14px;margin-top:4px">
+      <label style="margin:0;text-transform:none;color:var(--txt);font-size:14px">
+        <input type="checkbox" id="incSeries" checked style="width:auto;margin-right:6px">Series</label>
+      <label style="margin:0;text-transform:none;color:var(--txt);font-size:14px">
+        <input type="checkbox" id="incMovies" checked style="width:auto;margin-right:6px">Movies</label>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button id="load">Load watched</button>
+    </div>
+    <div id="loadMsg"></div>
+  </div>
+</div>
+
+<!-- ============ MAIN ============ -->
+<div id="main" class="hide">
+  <div class="tabs">
+    <div class="tab on" data-t="rank">Rank</div>
+    <div class="tab" data-t="list">List</div>
+    <div class="tab" data-t="data">Data</div>
+  </div>
+
+  <!-- RANK -->
+  <div id="tab-rank">
+    <div class="stat">
+      <span><b id="sRanked">0</b> ranked</span>
+      <span><b id="sQueue">0</b> unplaced</span>
+      <span><b id="sComps">0</b> comparisons</span>
+    </div>
+    <p class="prompt" id="prompt">Which is <b>better</b>?</p>
+    <div class="vs">
+      <div class="pick" id="pickA"></div>
+      <div class="mid">
+        <div class="v">VS</div>
+        <button class="ghost sm" id="skip">Skip</button>
+        <div style="font-size:11px;text-align:center">
+          <span class="kbd">←</span> <span class="kbd">→</span><br>pick
+        </div>
+      </div>
+      <div class="pick" id="pickB"></div>
+    </div>
+    <div class="row" style="margin-top:14px;justify-content:center">
+      <button class="ghost sm" id="undo">Undo last</button>
+    </div>
+    <div id="done" class="card hide" style="text-align:center">
+      <div style="font-size:15px;margin-bottom:6px">Everything's placed.</div>
+      <div class="sub" style="margin:0">Keep going to refine the order — it'll pull pairs from
+      different time periods so recency doesn't skew things.</div>
+      <div class="row" style="justify-content:center;margin-top:12px">
+        <button id="refineMore">Refine anyway</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIST -->
+  <div id="tab-list" class="hide">
+    <div class="row" style="margin-bottom:12px">
+      <button class="ghost sm" id="copyMd">Copy as markdown</button>
+      <button class="ghost sm" id="favTop">★ Top 10 in Jellyfin</button>
+    </div>
+    <div id="favMsg"></div>
+    <div class="card" style="padding:4px 8px"><ol class="rank" id="rankList"></ol></div>
+  </div>
+
+  <!-- DATA -->
+  <div id="tab-data">
+    <div class="card">
+      <div class="sub" style="margin:0 0 10px">Everything lives in this browser's storage.
+      Export to move it, or to feed the plugin later.</div>
+      <div class="row">
+        <button class="ghost sm" id="exp">Export JSON</button>
+        <button class="ghost sm" id="impBtn">Import JSON</button>
+        <button class="ghost sm" id="rescan">Rescan library</button>
+        <button class="ghost sm" id="reset" style="border-color:#7f1d1d;color:#f87171">Reset rankings</button>
+      </div>
+      <input type="file" id="imp" accept=".json" class="hide">
+      <pre id="expOut" class="hide"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const LS = 'rankbox.v1';
+
+let cfg = { url:'', key:'', userId:'' };
+let items = {};        // id -> {id,name,type,played,poster}
+let ranked = [];       // ids, best first
+let queue = [];        // ids awaiting placement
+let comps = 0;
+let history = [];      // for undo
+let current = null;    // active question
+
+/* ---------- storage ---------- */
+function save(){
+  try{ localStorage.setItem(LS, JSON.stringify({cfg,items,ranked,queue,comps})); }catch(e){}
+}
+function load(){
+  try{
+    const r = localStorage.getItem(LS); if(!r) return false;
+    const d = JSON.parse(r);
+    cfg = d.cfg||cfg; items = d.items||{}; ranked = d.ranked||[];
+    queue = d.queue||[]; comps = d.comps||0;
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ---------- jellyfin ---------- */
+const api = (path, opts={}) => {
+  const sep = path.includes('?') ? '&' : '?';
+  return fetch(cfg.url.replace(/\/$/,'') + path + sep + 'api_key=' + encodeURIComponent(cfg.key), opts);
+};
+const poster = id => cfg.url.replace(/\/$/,'') +
+  `/Items/${id}/Images/Primary?maxHeight=450&api_key=${encodeURIComponent(cfg.key)}`;
+
+async function connect(){
+  cfg.url = $('#url').value.trim();
+  cfg.key = $('#key').value.trim();
+  $('#setupMsg').innerHTML = '';
+  if(!cfg.url || !cfg.key){ $('#setupMsg').innerHTML = '<div class="err">Need both fields.</div>'; return; }
+  try{
+    const r = await api('/Users');
+    if(!r.ok) throw new Error('HTTP ' + r.status + (r.status===401?' — bad API key':''));
+    const users = await r.json();
+    $('#user').innerHTML = users.map(u=>`<option value="${u.Id}">${esc(u.Name)}</option>`).join('');
+    if(cfg.userId) $('#user').value = cfg.userId;
+    $('#userCard').classList.remove('hide');
+    $('#setupMsg').innerHTML = `<div class="ok">Connected — ${users.length} profile(s).</div>`;
+    save();
+  }catch(e){
+    $('#setupMsg').innerHTML = `<div class="err">Couldn't reach it: ${esc(e.message)}
+
+If the page is https and Jellyfin is http, the browser blocks it.
+Serve this file over the same scheme as Jellyfin, or open it as a local file.</div>`;
+  }
+}
+
+async function loadLibrary(){
+  cfg.userId = $('#user').value;
+  const types = [];
+  if($('#incSeries').checked) types.push('Series');
+  if($('#incMovies').checked) types.push('Movie');
+  if(!types.length){ $('#loadMsg').innerHTML='<div class="err">Pick at least one type.</div>'; return; }
+
+  $('#loadMsg').innerHTML = '<div class="sub" style="margin:8px 0 0">Loading…</div>';
+  try{
+    const r = await api(`/Users/${cfg.userId}/Items?Recursive=true&IncludeItemTypes=${types.join(',')}`
+      + `&Fields=UserData&SortBy=SortName&Limit=5000`);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+
+    let found = 0;
+    for(const it of (data.Items||[])){
+      const ud = it.UserData || {};
+      const watched = ud.Played === true || (ud.PlayCount||0) > 0;
+      if(!watched) continue;
+      found++;
+      if(!items[it.Id]){
+        items[it.Id] = {
+          id: it.Id, name: it.Name, type: it.Type,
+          played: ud.LastPlayedDate || null
+        };
+      } else {
+        items[it.Id].played = ud.LastPlayedDate || items[it.Id].played;
+      }
+    }
+    // anything known but not yet ranked goes in the queue
+    const known = new Set([...ranked, ...queue]);
+    for(const id in items) if(!known.has(id)) queue.push(id);
+
+    if(!found){ $('#loadMsg').innerHTML = '<div class="err">No watched items found for that profile.</div>'; return; }
+    save();
+    $('#setup').classList.add('hide');
+    $('#main').classList.remove('hide');
+    next();
+  }catch(e){
+    $('#loadMsg').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+/* ---------- time buckets (recency-bias control) ---------- */
+const DAY = 864e5;
+function ageDays(id){
+  const p = items[id] && items[id].played;
+  if(!p) return 9999;
+  return (Date.now() - new Date(p).getTime()) / DAY;
+}
+function bucket(id){
+  const d = ageDays(id);
+  if(d <= 21) return 'recent';
+  if(d <= 180) return 'mid';
+  return 'old';
+}
+
+/* ---------- pairing ---------- */
+// placing a new item = binary search against the ranked list
+let placing = null; // {id, lo, hi}
+
+function startPlacement(){
+  // bias the pick: prefer something NOT watched in the last 3 weeks when we can,
+  // so the list doesn't get built newest-first
+  const older = queue.filter(id => ageDays(id) > 21);
+  const pool = older.length ? older : queue;
+  const id = pool[Math.floor(Math.random()*pool.length)];
+  queue.splice(queue.indexOf(id),1);
+  placing = { id, lo:0, hi:ranked.length };
+}
+
+// refinement: two items close in rank but far apart in watch date
+function refinePair(){
+  if(ranked.length < 2) return null;
+  let best = null, bestScore = -1;
+  for(let t=0;t<40;t++){
+    const i = Math.floor(Math.random()*ranked.length);
+    const span = 1 + Math.floor(Math.random()*4);
+    const j = i + (Math.random()<.5 ? span : -span);
+    if(j<0 || j>=ranked.length || j===i) continue;
+    const a = ranked[i], b = ranked[j];
+    const dt = Math.abs(ageDays(a) - ageDays(b));
+    const crossed = bucket(a) !== bucket(b) ? 60 : 0;
+    const score = dt + crossed + Math.random()*10;
+    if(score > bestScore){ bestScore = score; best = [Math.min(i,j), Math.max(i,j)]; }
+  }
+  return best;
+}
+
+function next(){
+  $('#done').classList.add('hide');
+  $('.vs').classList.remove('hide');
+
+  // finish an in-progress placement
+  if(placing){
+    if(placing.lo >= placing.hi){
+      ranked.splice(placing.lo, 0, placing.id);
+      placing = null; save();
+    } else {
+      const mid = (placing.lo + placing.hi) >> 1;
+      current = { mode:'place', a:placing.id, b:ranked[mid], mid };
+      return render();
+    }
+  }
+  if(queue.length){ startPlacement(); return next(); }
+
+  const pair = refinePair();
+  if(!pair){
+    $('.vs').classList.add('hide');
+    $('#done').classList.remove('hide');
+    current = null; return updateStats();
+  }
+  current = { mode:'refine', a:ranked[pair[0]], b:ranked[pair[1]], i:pair[0], j:pair[1] };
+  render();
+}
+
+function answer(winner){ // 'a' | 'b'
+  if(!current) return;
+  history.push({ ranked:[...ranked], queue:[...queue], placing: placing?{...placing}:null, comps });
+  if(history.length > 40) history.shift();
+  comps++;
+
+  if(current.mode === 'place'){
+    // a is the item being placed, b is the pivot
+    if(winner === 'a') placing.hi = current.mid;      // a is better → search upper half
+    else placing.lo = current.mid + 1;
+  } else {
+    // i is above j. if the lower one wins, move it above
+    if(winner === 'b'){
+      const [id] = ranked.splice(current.j,1);
+      ranked.splice(current.i, 0, id);
+    }
+  }
+  save(); next();
+}
+
+function undo(){
+  const h = history.pop(); if(!h) return;
+  ranked = h.ranked; queue = h.queue; placing = h.placing; comps = h.comps;
+  save(); next();
+}
+
+/* ---------- render ---------- */
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function whenTxt(id){
+  const p = items[id] && items[id].played;
+  if(!p) return 'no watch date';
+  const d = Math.round(ageDays(id));
+  if(d < 1) return 'watched today';
+  if(d < 30) return `watched ${d}d ago`;
+  if(d < 365) return `watched ${Math.round(d/30)}mo ago`;
+  return `watched ${(d/365).toFixed(1)}y ago`;
+}
+function cardHTML(id){
+  const it = items[id]; const b = bucket(id);
+  return `<img src="${poster(id)}" alt="" loading="lazy"
+            onerror="this.style.visibility='hidden'">
+          <div class="meta">
+            <div class="ttl">${esc(it.name)}</div>
+            <div class="when">${whenTxt(id)}</div>
+            <span class="bucket ${b}">${b}</span>
+          </div>`;
+}
+function render(){
+  if(!current) return;
+  $('#pickA').innerHTML = cardHTML(current.a);
+  $('#pickB').innerHTML = cardHTML(current.b);
+  $('#prompt').innerHTML = current.mode === 'place'
+    ? 'Where does this go? Pick the <b>better</b> one.'
+    : 'Second look — which is <b>actually</b> better?';
+  updateStats();
+}
+function updateStats(){
+  $('#sRanked').textContent = ranked.length;
+  $('#sQueue').textContent = queue.length + (placing?1:0);
+  $('#sComps').textContent = comps;
+}
+function renderList(){
+  $('#rankList').innerHTML = ranked.map(id=>{
+    const it = items[id];
+    return `<li><img src="${poster(id)}" loading="lazy" onerror="this.style.visibility='hidden'">
+      <span class="n">${esc(it.name)}</span>
+      <span class="c">${it.type==='Movie'?'film':'series'}</span></li>`;
+  }).join('') || '<li style="color:var(--dim)">Nothing ranked yet.</li>';
+}
+
+/* ---------- write back ---------- */
+async function favTop(){
+  $('#favMsg').innerHTML = '<div class="sub" style="margin:6px 0 0">Marking…</div>';
+  let ok=0, fail=0;
+  for(const id of ranked.slice(0,10)){
+    let done = false;
+    for(const p of [`/Users/${cfg.userId}/FavoriteItems/${id}`, `/UserFavoriteItems/${id}`]){
+      try{ const r = await api(p, {method:'POST'}); if(r.ok){ done=true; break; } }catch(e){}
+    }
+    done ? ok++ : fail++;
+  }
+  $('#favMsg').innerHTML = fail
+    ? `<div class="err">${ok} marked, ${fail} failed (endpoint differs by Jellyfin version).</div>`
+    : `<div class="ok">Top ${ok} marked as favorites.</div>`;
+}
+
+/* ---------- wiring ---------- */
+$('#connect').onclick = connect;
+$('#load').onclick = loadLibrary;
+$('#forget').onclick = ()=>{ try{localStorage.removeItem(LS)}catch(e){}; location.reload(); };
+$('#pickA').onclick = ()=>answer('a');
+$('#pickB').onclick = ()=>answer('b');
+$('#skip').onclick = ()=>next();
+$('#undo').onclick = undo;
+$('#refineMore').onclick = ()=>next();
+$('#favTop').onclick = favTop;
+$('#rescan').onclick = loadLibrary;
+
+$('#copyMd').onclick = ()=>{
+  const md = ranked.map((id,i)=>`${i+1}. ${items[id].name}`).join('\n');
+  navigator.clipboard.writeText(md);
+  $('#copyMd').textContent = 'Copied'; setTimeout(()=>$('#copyMd').textContent='Copy as markdown',1200);
+};
+$('#exp').onclick = ()=>{
+  const blob = new Blob([JSON.stringify({items,ranked,queue,comps},null,2)],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'rankbox.json'; a.click();
+};
+$('#impBtn').onclick = ()=>$('#imp').click();
+$('#imp').onchange = e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const fr = new FileReader();
+  fr.onload = ()=>{ try{
+    const d = JSON.parse(fr.result);
+    items = d.items||items; ranked = d.ranked||[]; queue = d.queue||[]; comps = d.comps||0;
+    placing = null; save(); next(); renderList();
+  }catch(err){ alert('Bad file'); } };
+  fr.readAsText(f);
+};
+$('#reset').onclick = ()=>{
+  if(!confirm('Clear the ranking? Library stays.')) return;
+  queue = [...ranked, ...queue]; ranked = []; comps = 0; placing = null; save(); next();
+};
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick = ()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    t.classList.add('on');
+    ['rank','list','data'].forEach(n=>$('#tab-'+n).classList.toggle('hide', n!==t.dataset.t));
+    if(t.dataset.t==='list') renderList();
+  };
+});
+
+addEventListener('keydown', e=>{
+  if($('#main').classList.contains('hide')) return;
+  if(e.key==='ArrowLeft') answer('a');
+  if(e.key==='ArrowRight') answer('b');
+  if(e.key===' '){ e.preventDefault(); next(); }
+  if(e.key==='z' && (e.metaKey||e.ctrlKey)) undo();
+});
+
+/* boot */
+if(load() && cfg.url && cfg.key){
+  $('#url').value = cfg.url; $('#key').value = cfg.key;
+  if(ranked.length || queue.length){
+    $('#setup').classList.add('hide'); $('#main').classList.remove('hide'); next();
+  } else { connect(); }
+}
+</script>
+</body>
+</html>
