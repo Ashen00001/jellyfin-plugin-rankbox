@@ -15,6 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web app (tests + build)
+        working-directory: web
+        run: |
+          npm ci --no-fund --no-audit
+          npm test
+          npm run build
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -33,7 +46,7 @@ jobs:
             "description": "Rank your shows and movies by comparing them head to head.",
             "guid": "022bcb7f-e929-4aa7-80d9-b63080a92b36",
             "name": "RankBox",
-            "overview": "Pairwise ranking with drag-to-reorder, recency checks and txt/md/csv/json export.",
+            "overview": "Rank shows and movies head to head: scores, tiers, recency checks, insights, share cards and a Jellyfin home pane.",
             "owner": "Ashen00001",
             "targetAbi": "12.1.0.0",
             "version": "$VERSION",

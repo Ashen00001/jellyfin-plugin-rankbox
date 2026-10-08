@@ -1,0 +1,35 @@
+/* Fight card: two posters square off under one question; the ranking reads like
+   broadcast standings — tall condensed numerals, tier colour stripes, poster-led.
+   Dark by design: RankBox lives inside Jellyfin's dark UI. */
+:root, :host {
+  --rb-bg: #0c0f14;
+  --rb-surface: #141922;
+  --rb-surface-2: #1b2230;
+  --rb-surface-3: #232c3c;
+  --rb-line: #263042;
+  --rb-line-strong: #34405a;
+  --rb-text: #eef1f6;
+  --rb-muted: #8f99ac;
+  --rb-faint: #5e687c;
+  --rb-accent: #3fc1ec;      /* interactive */
+  --rb-accent-ink: #062330;
+  --rb-gold: #f4c55a;        /* rank numerals */
+  --rb-up: #35cf7f;
+  --rb-up-ink: #052414;
+  --rb-danger: #ef6a6a;
+
+  /* tier colours follow the classic tier-list ladder, toned for dark backgrounds */
+  --rb-tier-S: #f06b6b;
+  --rb-tier-A: #f39a53;
+  --rb-tier-B: #eccb57;
+  --rb-tier-C: #8fd17a;
+  --rb-tier-D: #6aa8e8;
+
+  --rb-font-display: 'Big Shoulders Display', 'Oswald', 'Arial Narrow', 'Roboto Condensed', sans-serif;
+  --rb-font-body: 'Instrument Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+
+  --rb-radius: 14px;
+  --rb-radius-sm: 9px;
+  --rb-shadow: 0 18px 40px -18px rgba(0, 0, 0, .7);
+  color-scheme: dark;
+}

@@ -13,6 +13,16 @@ if (-not $version) { throw 'could not read AssemblyVersion from the csproj' }
 $dest    = Join-Path $plugins "RankBox_$version"
 
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_NOLOGO = '1'
+
+# 1. web app (Svelte) -> web/dist, which gets embedded in the DLL
+Push-Location (Join-Path $root 'web')
+try {
+    if (-not (Test-Path node_modules)) { npm ci --no-fund --no-audit; if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' } }
+    npm run test --silent; if ($LASTEXITCODE -ne 0) { throw 'engine tests failed' }
+    npm run build --silent; if ($LASTEXITCODE -ne 0) { throw 'web build failed' }
+} finally { Pop-Location }
+
+# 2. plugin
 & $dotnet build $proj -c Release --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 

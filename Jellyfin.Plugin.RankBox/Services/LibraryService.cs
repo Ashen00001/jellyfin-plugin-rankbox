@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -17,23 +19,29 @@ public class Candidate
 
     public int? Year { get; set; }
 
-    public string Type { get; set; } = string.Empty;
+    public string Type { get; set; } = "Series";
 
-    /// <summary>finished, watching or unwatched (as far as Jellyfin knows).</summary>
+    /// <summary>finished, watching or unwatched, as far as Jellyfin knows.</summary>
     public string Status { get; set; } = "unwatched";
 
     public int PlayedEpisodes { get; set; }
 
     public int TotalEpisodes { get; set; }
 
-    /// <summary>Latest play of the movie, or of any episode in the series. Null when Jellyfin never saw it played.</summary>
-    public DateTime? LastWatched { get; set; }
+    public string? LastWatched { get; set; }
 
-    public bool IsFavorite { get; set; }
+    public string[] Genres { get; set; } = Array.Empty<string>();
+
+    public string[] Studios { get; set; } = Array.Empty<string>();
 }
 
 public class LibraryService
 {
+    // Building candidates walks every episode's user data (~1–2 s on a big library),
+    // so keep it per user for a few minutes. Watch events clear it straight away.
+    private static readonly ConcurrentDictionary<(Guid, string), (DateTime At, List<Candidate> Items)> Cache = new();
+    private static readonly TimeSpan CacheFor = TimeSpan.FromMinutes(10);
+
     private readonly ILibraryManager _library;
     private readonly IUserManager _users;
     private readonly IUserDataManager _userData;
@@ -45,26 +53,48 @@ public class LibraryService
         _userData = userData;
     }
 
+    public static void Invalidate(Guid userId)
+    {
+        foreach (var k in Cache.Keys.Where(k => k.Item1 == userId).ToList())
+        {
+            Cache.TryRemove(k, out _);
+        }
+    }
+
     public bool UserExists(Guid userId) => _users.GetUserById(userId) != null;
+
+    public string UserName(Guid userId) => _users.GetUserById(userId)?.Username ?? "Someone";
+
+    public string? Name(string id) => Guid.TryParse(id, out var g) ? _library.GetItemById(g)?.Name : null;
 
     public List<Candidate> GetCandidates(Guid userId, string list)
     {
+        if (Cache.TryGetValue((userId, list), out var hit) && DateTime.UtcNow - hit.At < CacheFor)
+        {
+            return hit.Items;
+        }
+
+        var items = Build(userId, list);
+        Cache[(userId, list)] = (DateTime.UtcNow, items);
+        return items;
+    }
+
+    private List<Candidate> Build(Guid userId, string list)
+    {
         var user = _users.GetUserById(userId) ?? throw new ArgumentException("Unknown user");
         var result = new List<Candidate>();
+        static string? Iso(DateTime? d) => d?.ToUniversalTime().ToString("o");
 
         if (list != "movies")
         {
-            // Series-level Played is unreliable for half-watched shows, so build status
-            // from the episodes themselves (specials don't count toward "finished").
+            // series-level Played is unreliable for half-watched shows: count episodes (specials don't count)
             var stats = new Dictionary<Guid, (int Played, int Total, DateTime? Last)>();
-            var episodes = _library.GetItemList(new InternalItemsQuery(user)
+            foreach (var item in _library.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Episode },
                 Recursive = true,
-                IsVirtualItem = false
-            });
-
-            foreach (var item in episodes)
+                IsVirtualItem = false,
+            }))
             {
                 if (item is not Episode ep || ep.SeriesId == Guid.Empty)
                 {
@@ -73,12 +103,10 @@ public class LibraryService
 
                 var ud = _userData.GetUserData(user, ep);
                 stats.TryGetValue(ep.SeriesId, out var s);
-                var regular = ep.ParentIndexNumber != 0;
-                var played = ud != null && (ud.Played || ud.PlayCount > 0);
-                if (regular)
+                if (ep.ParentIndexNumber != 0)
                 {
                     s.Total++;
-                    if (played)
+                    if (ud != null && (ud.Played || ud.PlayCount > 0))
                     {
                         s.Played++;
                     }
@@ -92,13 +120,7 @@ public class LibraryService
                 stats[ep.SeriesId] = s;
             }
 
-            var series = _library.GetItemList(new InternalItemsQuery(user)
-            {
-                IncludeItemTypes = new[] { BaseItemKind.Series },
-                Recursive = true
-            });
-
-            foreach (var item in series)
+            foreach (var item in _library.GetItemList(new InternalItemsQuery(user) { IncludeItemTypes = new[] { BaseItemKind.Series }, Recursive = true }))
             {
                 stats.TryGetValue(item.Id, out var s);
                 var ud = _userData.GetUserData(user, item);
@@ -118,22 +140,21 @@ public class LibraryService
                     Status = finished ? "finished" : s.Played > 0 ? "watching" : "unwatched",
                     PlayedEpisodes = s.Played,
                     TotalEpisodes = s.Total,
-                    LastWatched = last,
-                    IsFavorite = ud?.IsFavorite == true
+                    LastWatched = Iso(last),
+                    Genres = item.Genres ?? Array.Empty<string>(),
+                    Studios = item.Studios ?? Array.Empty<string>(),
                 });
             }
         }
 
         if (list != "series")
         {
-            var movies = _library.GetItemList(new InternalItemsQuery(user)
+            foreach (var item in _library.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Movie },
                 Recursive = true,
-                IsVirtualItem = false
-            });
-
-            foreach (var item in movies)
+                IsVirtualItem = false,
+            }))
             {
                 var ud = _userData.GetUserData(user, item);
                 var played = ud != null && (ud.Played || ud.PlayCount > 0);
@@ -144,8 +165,9 @@ public class LibraryService
                     Year = item.ProductionYear,
                     Type = "Movie",
                     Status = played ? "finished" : (ud?.PlaybackPositionTicks ?? 0) > 0 ? "watching" : "unwatched",
-                    LastWatched = ud?.LastPlayedDate,
-                    IsFavorite = ud?.IsFavorite == true
+                    LastWatched = Iso(ud?.LastPlayedDate),
+                    Genres = item.Genres ?? Array.Empty<string>(),
+                    Studios = item.Studios ?? Array.Empty<string>(),
                 });
             }
         }
@@ -153,14 +175,32 @@ public class LibraryService
         return result.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Marks the top N ranked items as favorites. Never un-favorites anything.</summary>
+    /// <summary>Which list a details page belongs to: episodes and seasons count as their show.</summary>
+    public (string Id, string List)? BadgeTarget(string itemId)
+    {
+        if (!Guid.TryParse(itemId, out var g) || _library.GetItemById(g) is not BaseItem item)
+        {
+            return null;
+        }
+
+        return item switch
+        {
+            Movie => (item.Id.ToString("N"), "movies"),
+            Series => (item.Id.ToString("N"), "series"),
+            Season s when s.SeriesId != Guid.Empty => (s.SeriesId.ToString("N"), "series"),
+            Episode e when e.SeriesId != Guid.Empty => (e.SeriesId.ToString("N"), "series"),
+            _ => null,
+        };
+    }
+
+    /// <summary>Star these as favorites. Never removes a star.</summary>
     public int MarkFavorites(Guid userId, IEnumerable<string> ids)
     {
         var user = _users.GetUserById(userId) ?? throw new ArgumentException("Unknown user");
         var count = 0;
-        foreach (var id in ids)
+        foreach (var id in ids.Take(100))
         {
-            if (!Guid.TryParse(id, out var guid) || _library.GetItemById(guid) is not BaseItem item)
+            if (!Guid.TryParse(id, out var g) || _library.GetItemById(g) is not BaseItem item)
             {
                 continue;
             }
@@ -188,70 +228,71 @@ public class LibraryService
         ["txt"] = ("txt", "text/plain"),
         ["md"] = ("md", "text/markdown"),
         ["csv"] = ("csv", "text/csv"),
-        ["json"] = ("json", "application/json")
+        ["json"] = ("json", "application/json"),
     };
 
+    /// <summary>Server-side export from the last saved snapshot (handy for scripts; the app exports on its own too).</summary>
     public string Export(Guid userId, string list, ListState state, string format)
     {
-        var user = _users.GetUserById(userId) ?? throw new ArgumentException("Unknown user");
+        var who = UserName(userId);
         var byId = GetCandidates(userId, list).ToDictionary(c => c.Id);
-        var rows = state.Ranked.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
-        var title = list switch { "series" => "Shows", "movies" => "Movies", _ => "Shows & movies" };
+        var rows = (state.Snapshot?.Items ?? new()).Where(i => byId.ContainsKey(i.Id)).OrderBy(i => i.Rank).Select(i => (S: i, C: byId[i.Id])).ToList();
+        var title = $"{who}'s {(list == "series" ? "Shows" : list == "movies" ? "Movies" : "Everything")} ranking";
         var date = DateTime.Now.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
-        string Year(Candidate c) => c.Year is int y ? $" ({y})" : string.Empty;
-
+        string Yr(Candidate c) => c.Year is int y ? $" ({y})" : string.Empty;
         var sb = new StringBuilder();
         switch (format)
         {
             case "md":
-                sb.AppendLine($"# {user.Username}'s {title} ranking");
-                sb.AppendLine();
-                sb.AppendLine($"_{rows.Count} ranked · {state.Comparisons} comparisons · exported {date} with RankBox_");
-                sb.AppendLine();
-                for (var i = 0; i < rows.Count; i++)
+                sb.AppendLine($"# {title}").AppendLine().AppendLine($"_{rows.Count} ranked · {state.Answers.Count} answers · {date} · made with RankBox_").AppendLine();
+                foreach (var tier in new[] { "S", "A", "B", "C", "D" })
                 {
-                    var c = rows[i];
-                    var kind = list == "all" ? (c.Type == "Movie" ? " · movie" : " · series") : string.Empty;
-                    sb.AppendLine($"{i + 1}. **{EscapeMd(c.Name)}**{Year(c)}{kind}");
+                    var t = rows.Where(r => r.S.Tier == tier).ToList();
+                    if (t.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    sb.AppendLine($"## {tier} tier").AppendLine();
+                    foreach (var (s, c) in t)
+                    {
+                        sb.AppendLine(CultureInfo.InvariantCulture, $"{s.Rank}. **{c.Name.Replace("*", "\\*")}**{Yr(c)} — {s.Score:0.0}");
+                    }
+
+                    sb.AppendLine();
                 }
 
                 break;
-
             case "csv":
-                sb.AppendLine("rank,title,year,type,status,last_watched,jellyfin_id");
-                for (var i = 0; i < rows.Count; i++)
+                sb.AppendLine("rank,title,year,type,tier,score,last_watched,jellyfin_id");
+                foreach (var (s, c) in rows)
                 {
-                    var c = rows[i];
-                    sb.AppendLine(string.Join(',',
-                        i + 1,
-                        Csv(c.Name),
-                        c.Year?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-                        c.Type,
-                        c.Status,
-                        c.LastWatched?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
-                        c.Id));
+                    var name = c.Name.IndexOfAny(new[] { ',', '"', '\n' }) >= 0 ? "\"" + c.Name.Replace("\"", "\"\"") + "\"" : c.Name;
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"{s.Rank},{name},{c.Year},{c.Type},{s.Tier},{s.Score:0.0},{c.LastWatched?[..10]},{s.Id}");
                 }
 
                 break;
-
             case "json":
                 return JsonSerializer.Serialize(
-                    new
-                    {
-                        user = user.Username,
-                        list,
-                        exported = DateTime.UtcNow,
-                        comparisons = state.Comparisons,
-                        ranking = rows.Select((c, i) => new { rank = i + 1, c.Name, c.Year, c.Type, c.Status, c.LastWatched, c.Id })
-                    },
-                    new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-
+                    new { title, list, exported = DateTime.UtcNow, answers = state.Answers.Count, ranking = rows.Select(r => new { r.S.Rank, title = r.C.Name, r.C.Year, r.C.Type, r.S.Tier, r.S.Score, r.S.Id }) },
+                    Json.File);
             default:
-                sb.AppendLine($"{user.Username}'s {title} ranking ({date})");
-                sb.AppendLine();
-                for (var i = 0; i < rows.Count; i++)
+                sb.AppendLine($"{title} ({date})").AppendLine();
+                var current = string.Empty;
+                foreach (var (s, c) in rows)
                 {
-                    sb.AppendLine($"{i + 1}. {rows[i].Name}{Year(rows[i])}");
+                    if (s.Tier != current)
+                    {
+                        if (current.Length > 0)
+                        {
+                            sb.AppendLine();
+                        }
+
+                        sb.AppendLine($"{s.Tier} TIER");
+                        current = s.Tier;
+                    }
+
+                    sb.AppendLine($"{s.Rank}. {c.Name}{Yr(c)}");
                 }
 
                 break;
@@ -259,10 +300,4 @@ public class LibraryService
 
         return sb.ToString();
     }
-
-    private static string EscapeMd(string s) =>
-        s.Replace("\\", "\\\\").Replace("*", "\\*").Replace("_", "\\_").Replace("[", "\\[").Replace("]", "\\]");
-
-    private static string Csv(string s) =>
-        s.IndexOfAny(new[] { ',', '"', '\n' }) >= 0 ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
 }

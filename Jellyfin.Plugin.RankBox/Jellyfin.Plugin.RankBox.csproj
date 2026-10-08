@@ -4,9 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.RankBox</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.RankBox</AssemblyName>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
@@ -39,9 +39,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Web\app.html" />
-    <EmbeddedResource Include="Web\notify.js" />
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <!-- the built web app: run "npm ci && npm run build" in ../web first (deploy.ps1 and CI do) -->
+    <EmbeddedResource Include="..\web\dist\**\*" LogicalName="rankbox-web/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <Target Name="CheckWebBuild" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('..\web\dist\index.html')" Text="web/dist is missing: run 'npm ci' and 'npm run build' in the web folder first." />
+  </Target>
 
 </Project>

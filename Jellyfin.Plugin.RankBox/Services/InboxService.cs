@@ -1,244 +1,191 @@
+using System.Globalization;
 using System.Text.Json;
 using MediaBrowser.Common.Configuration;
-using MediaBrowser.Controller.Library;
 
 namespace Jellyfin.Plugin.RankBox.Services;
 
-/// <summary>Something the user just finished (or marked watched) that RankBox wants placed.</summary>
+/// <summary>Something just finished (or marked watched) that RankBox wants placed.</summary>
 public class PendingFinish
 {
     public string Id { get; set; } = string.Empty;
 
     public string Name { get; set; } = string.Empty;
 
-    public string Type { get; set; } = string.Empty;
-
-    public int? Year { get; set; }
-
-    public DateTime FinishedAt { get; set; }
-
-    /// <summary>#position in the user's list when finished, if it was already ranked.</summary>
-    public int? RankedAt { get; set; }
+    public string Type { get; set; } = "Series";
 
     public string List { get; set; } = "series";
+
+    public string FinishedAt { get; set; } = string.Empty;
+
+    public int? RankedAt { get; set; }
 }
 
-/// <summary>"You rated W over L back when W was fresh, still agree?"</summary>
-public class RecheckItem
+/// <summary>"On Oct 7 you rated W over L right after watching W. Still agree?"</summary>
+public class RecheckDue
 {
     public string List { get; set; } = string.Empty;
 
     public string AnswerId { get; set; } = string.Empty;
 
-    public string WinnerId { get; set; } = string.Empty;
+    public string Winner { get; set; } = string.Empty;
+
+    public string Loser { get; set; } = string.Empty;
 
     public string WinnerName { get; set; } = string.Empty;
 
-    public string LoserId { get; set; } = string.Empty;
-
     public string LoserName { get; set; } = string.Empty;
 
-    /// <summary>Which of the two was fresh (watched in the 3 weeks before the answer).</summary>
-    public string FreshId { get; set; } = string.Empty;
-
-    public DateTime AnsweredAt { get; set; }
-
-    public int WinnerRank { get; set; }
-
-    public int LoserRank { get; set; }
-}
-
-public class Inbox
-{
-    public List<PendingFinish> Finished { get; set; } = new();
-
-    public List<RecheckItem> Rechecks { get; set; } = new();
-
-    public int Count => Finished.Count + Rechecks.Count;
+    public string At { get; set; } = string.Empty;
 }
 
 public class InboxService
 {
-    /// <summary>How long after a "fresh" answer before it gets re-asked.</summary>
     public static readonly TimeSpan RecheckAfter = TimeSpan.FromDays(21);
-
     private static readonly object Gate = new();
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
     private readonly string _dir;
-    private readonly StateStore _store;
-    private readonly ILibraryManager _library;
+    private readonly Store _store;
 
-    public InboxService(IApplicationPaths paths, StateStore store, ILibraryManager library)
+    public InboxService(IApplicationPaths paths, Store store)
     {
         _dir = Path.Combine(paths.DataPath, "rankbox");
         _store = store;
-        _library = library;
     }
 
-    public Inbox Get(Guid userId)
+    public List<PendingFinish> Finished(Guid user)
     {
-        var inbox = new Inbox();
         var cutoff = DateTime.UtcNow.AddDays(-30);
-        inbox.Finished = ReadPending(userId).Where(p => p.FinishedAt > cutoff).OrderByDescending(p => p.FinishedAt).ToList();
+        return ReadPending(user)
+            .Where(p => DateTime.TryParse(p.FinishedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) && d > cutoff)
+            .OrderByDescending(p => p.FinishedAt)
+            .ToList();
+    }
 
-        var now = DateTime.UtcNow;
-        foreach (var list in StateStore.Lists)
+    /// <summary>
+    /// Same rule as the app's engine: re-ask wins a title got while it was fresh, 3+ weeks later,
+    /// at most two per title, only while the saved order still agrees with the answer.
+    /// </summary>
+    public List<RecheckDue> Rechecks(Guid user, Func<string, string?> name)
+    {
+        var due = new List<RecheckDue>();
+        var cutoff = DateTime.UtcNow - RecheckAfter;
+        foreach (var list in Store.Lists)
         {
-            var state = _store.Get(userId, list);
-            if (state.Answers.Count == 0)
+            var s = _store.Get(user, list);
+            if (s.Snapshot == null || s.Answers.Count == 0)
             {
                 continue;
             }
 
-            var pos = new Dictionary<string, int>();
-            for (var i = 0; i < state.Ranked.Count; i++)
-            {
-                pos[state.Ranked[i]] = i;
-            }
-
-            // newest answer per pair wins; older ones about the same pair don't count
-            var latest = state.Answers
+            var rank = s.Snapshot.Items.ToDictionary(i => i.Id, i => i.Rank);
+            var latest = s.Answers
                 .GroupBy(a => string.CompareOrdinal(a.A, a.B) < 0 ? a.A + a.B : a.B + a.A)
-                .Select(g => g.OrderBy(a => a.At).Last());
+                .Select(g => g.OrderBy(a => a.At, StringComparer.Ordinal).Last());
 
+            var perWinner = new Dictionary<string, List<RecheckDue>>();
             foreach (var a in latest)
             {
-                if (a.CheckedAt != null || !(a.FreshA || a.FreshB) || now - a.At < RecheckAfter)
+                if (a.CheckedAt != null || a.R == 0.5 || a.Kind == "manual")
                 {
                     continue;
                 }
 
-                var loser = a.W == a.A ? a.B : a.A;
-                // only ask while the list still says what that answer said
-                if (!pos.TryGetValue(a.W, out var wp) || !pos.TryGetValue(loser, out var lp) || wp > lp)
+                if (!DateTime.TryParse(a.At, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) || at > cutoff)
                 {
                     continue;
                 }
 
-                inbox.Rechecks.Add(new RecheckItem
+                var winner = a.R == 1 ? a.A : a.B;
+                var loser = a.R == 1 ? a.B : a.A;
+                var winnerFresh = winner == a.A ? a.FreshA == true : a.FreshB == true;
+                if (!winnerFresh || !rank.TryGetValue(winner, out var wr) || !rank.TryGetValue(loser, out var lr) || wr > lr)
                 {
-                    List = list,
-                    AnswerId = a.Id,
-                    WinnerId = a.W,
-                    WinnerName = NameOf(a.W),
-                    LoserId = loser,
-                    LoserName = NameOf(loser),
-                    FreshId = a.FreshA && a.FreshB ? string.Empty : a.FreshA ? a.A : a.B,
-                    AnsweredAt = a.At,
-                    WinnerRank = wp + 1,
-                    LoserRank = lp + 1
-                });
-            }
-        }
-
-        inbox.Rechecks = inbox.Rechecks.OrderBy(r => r.AnsweredAt).Take(20).ToList();
-        return inbox;
-    }
-
-    /// <summary>Apply a recency check. agree: true = keep, false = flip, null = not sure (just retire it).</summary>
-    public ListState? Recheck(Guid userId, string list, string answerId, bool? agree)
-    {
-        var state = _store.Get(userId, list);
-        var ans = state.Answers.FirstOrDefault(a => a.Id == answerId);
-        if (ans == null)
-        {
-            return null;
-        }
-
-        var now = DateTime.UtcNow;
-        var loser = ans.W == ans.A ? ans.B : ans.A;
-        var winner = ans.W;
-
-        // retire every open answer about this pair
-        foreach (var a in state.Answers.Where(a => (a.A == ans.A && a.B == ans.B) || (a.A == ans.B && a.B == ans.A)))
-        {
-            a.CheckedAt ??= now;
-        }
-
-        ans.Outcome = agree switch { true => "kept", false => "flipped", _ => null };
-
-        if (agree != null)
-        {
-            if (agree == false)
-            {
-                var wi = state.Ranked.IndexOf(winner);
-                var li = state.Ranked.IndexOf(loser);
-                if (wi >= 0 && li > wi)
-                {
-                    state.Ranked.RemoveAt(li);
-                    state.Ranked.Insert(wi, loser);
+                    continue;
                 }
+
+                if (!perWinner.TryGetValue(winner, out var l))
+                {
+                    perWinner[winner] = l = new List<RecheckDue>();
+                }
+
+                l.Add(new RecheckDue { List = list, AnswerId = a.Id, Winner = winner, Loser = loser, At = a.At });
             }
 
-            state.Comparisons++;
-            state.Answers.Add(new AnswerRecord
+            foreach (var (_, l) in perWinner)
             {
-                Id = Guid.NewGuid().ToString("N")[..10],
-                A = winner,
-                B = loser,
-                W = agree == true ? winner : loser,
-                At = now,
-                CheckedAt = now   // a deliberate second look doesn't need a third
-            });
+                due.AddRange(l.OrderBy(d => rank[d.Loser]).Take(2));
+            }
         }
 
-        return _store.Save(userId, list, state);
+        foreach (var d in due)
+        {
+            d.WinnerName = name(d.Winner) ?? "?";
+            d.LoserName = name(d.Loser) ?? "?";
+        }
+
+        return due.OrderBy(d => d.At, StringComparer.Ordinal).Take(20).ToList();
     }
 
-    public void AddPending(Guid userId, PendingFinish item)
+    public void AddPending(Guid user, PendingFinish item)
     {
         lock (Gate)
         {
-            var all = ReadPending(userId);
+            var all = ReadPending(user);
             all.RemoveAll(p => p.Id == item.Id);
             all.Add(item);
-            WritePending(userId, all.OrderByDescending(p => p.FinishedAt).Take(50).ToList());
+            WritePending(user, all.OrderByDescending(p => p.FinishedAt).Take(50).ToList());
         }
     }
 
-    public void Dismiss(Guid userId, string id)
+    public void Dismiss(Guid user, string id)
     {
         lock (Gate)
         {
-            var all = ReadPending(userId);
+            var all = ReadPending(user);
             if (all.RemoveAll(p => p.Id == id) > 0)
             {
-                WritePending(userId, all);
+                WritePending(user, all);
             }
         }
     }
 
-    private string NameOf(string id) =>
-        Guid.TryParse(id, out var g) && _library.GetItemById(g) is { } item ? item.Name : "(removed)";
+    private string FileFor(Guid user) => Path.Combine(_dir, user.ToString("N") + ".inbox.json");
 
-    private string FileFor(Guid userId) => Path.Combine(_dir, userId.ToString("N") + ".inbox.json");
-
-    private List<PendingFinish> ReadPending(Guid userId)
+    private List<PendingFinish> ReadPending(Guid user)
     {
-        lock (Gate)
+        var path = FileFor(user);
+        if (!File.Exists(path))
         {
-            var path = FileFor(userId);
-            if (!File.Exists(path))
-            {
-                return new List<PendingFinish>();
-            }
-
-            try
-            {
-                return JsonSerializer.Deserialize<List<PendingFinish>>(File.ReadAllText(path)) ?? new List<PendingFinish>();
-            }
-            catch (JsonException)
-            {
-                return new List<PendingFinish>();
-            }
+            return new List<PendingFinish>();
         }
+
+        try
+        {
+            // v1 wrote DateTime FinishedAt; read leniently and normalise to ISO strings
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            return doc.RootElement.EnumerateArray().Select(e => new PendingFinish
+            {
+                Id = Get(e, "Id") ?? string.Empty,
+                Name = Get(e, "Name") ?? string.Empty,
+                Type = Get(e, "Type") ?? "Series",
+                List = Get(e, "List") ?? "series",
+                FinishedAt = Get(e, "FinishedAt") ?? DateTime.UtcNow.ToString("o"),
+                RankedAt = (e.TryGetProperty("RankedAt", out var r) || e.TryGetProperty("rankedAt", out r)) && r.ValueKind == JsonValueKind.Number ? r.GetInt32() : null,
+            }).Where(p => p.Id.Length > 0).ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<PendingFinish>();
+        }
+
+        static string? Get(JsonElement e, string n) =>
+            e.TryGetProperty(n, out var v) || e.TryGetProperty(char.ToLowerInvariant(n[0]) + n[1..], out v) ? v.ToString() : null;
     }
 
-    private void WritePending(Guid userId, List<PendingFinish> items)
+    private void WritePending(Guid user, List<PendingFinish> items)
     {
         Directory.CreateDirectory(_dir);
-        var path = FileFor(userId);
-        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(items, Json));
+        var path = FileFor(user);
+        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(items, Json.File));
         File.Move(path + ".tmp", path, true);
     }
 }
