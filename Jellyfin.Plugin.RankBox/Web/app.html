@@ -14,7 +14,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--txt);
   font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:860px;margin:0 auto;padding:14px 14px calc(30px + env(safe-area-inset-bottom))}
+.wrap{max-width:860px;margin:0 auto;padding:14px 16px calc(30px + env(safe-area-inset-bottom))}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .hide{display:none!important}
 
@@ -121,7 +121,7 @@ pre{background:var(--panel2);border:1px solid var(--line);border-radius:10px;pad
   font-size:12.5px;max-height:46vh;white-space:pre-wrap;word-break:break-word;margin:0 0 10px}
 
 @media (max-width:520px){
-  .wrap{padding:10px 10px calc(24px + env(safe-area-inset-bottom))}
+  .wrap{padding:10px 16px calc(24px + env(safe-area-inset-bottom))}
   .vs,.answer{gap:8px}
   .q{font-size:15px}
   .fmt{grid-template-columns:repeat(2,1fr)}
@@ -247,6 +247,15 @@ pre{background:var(--panel2);border:1px solid var(--line);border-radius:10px;pad
 
 <script>
 'use strict';
+// show script errors on the page instead of failing silently
+function showError(msg){
+  const b = document.getElementById('boot'); if(!b) return;
+  b.classList.remove('hide');
+  b.innerHTML = '<div style="font-weight:600;margin-bottom:6px">Something broke</div><div class="dim" style="font-size:13px;word-break:break-word"></div>';
+  b.lastChild.textContent = msg;
+}
+addEventListener('error', e => showError(e.message || String(e.error)));
+addEventListener('unhandledrejection', e => showError('Promise: ' + ((e.reason && e.reason.message) || e.reason)));
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
