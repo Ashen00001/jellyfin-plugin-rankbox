@@ -3,9 +3,9 @@ name: build
 on:
   push:
     branches: [main, v2]
-  workflow_dispatch:
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
