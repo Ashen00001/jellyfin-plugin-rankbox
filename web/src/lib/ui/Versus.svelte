@@ -76,9 +76,9 @@
       {/if}
       <Poster name={a.name} year={a.year} src={poster(a.id)} size={compact ? 'lg' : 'xl'} />
       <figcaption>
-        <span class="t">{a.name}</span>
+        <span class="t" title={a.name}>{a.name}</span>
         <span class="m">{a.year ?? ''}{a.year ? ' · ' : ''}{agoText(a.lastWatched)}</span>
-        <button class="unseen" onclick={() => onunseen(a.id)}>Haven't seen it</button>
+        <button class="unseen" onclick={() => onunseen(a.id)}><Icon name="eyeoff" size={13} />Haven't seen it</button>
       </figcaption>
     </figure>
 
@@ -88,16 +88,17 @@
       {#if rB}<div class="badge rank num">#{rB}</div>{/if}
       <Poster name={b.name} year={b.year} src={poster(b.id)} size={compact ? 'lg' : 'xl'} />
       <figcaption>
-        <span class="t">{b.name}</span>
+        <span class="t" title={b.name}>{b.name}</span>
         <span class="m">{b.year ?? ''}{b.year ? ' · ' : ''}{agoText(b.lastWatched)}</span>
-        <button class="unseen" onclick={() => onunseen(b.id)}>Haven't seen it</button>
+        <button class="unseen" onclick={() => onunseen(b.id)}><Icon name="eyeoff" size={13} />Haven't seen it</button>
       </figcaption>
     </figure>
   </div>
 
-  {#if q.kind === 'place'}
-    <div class="ladder"><Ladder {slots} low={q.low} high={q.high} /></div>
-  {/if}
+  <!-- always takes its space, so the answer buttons stay put from one question to the next -->
+  <div class="ladder" class:idle={q.kind !== 'place'} aria-hidden={q.kind !== 'place'}>
+    {#if q.kind === 'place'}<Ladder {slots} low={q.low} high={q.high} />{:else}<Ladder slots={Math.max(1, slots)} low={1} high={1} />{/if}
+  </div>
 
   <div class="answers">
     <button class="ans hi" onclick={() => choose(1)}><Icon name="up" size={18} />{labels.hi}</button>
@@ -121,7 +122,8 @@
       radial-gradient(45% 55% at 78% 45%, hsl(var(--hb) 70% 50% / .22), transparent 70%);
     filter: blur(8px);
   }
-  .head { text-align: center; display: grid; gap: 6px; justify-items: center; }
+  /* room for eyebrow + two-line question + one "why" line, so the buttons below don't move between question types */
+  .head { text-align: center; display: grid; gap: 6px; justify-items: center; align-content: end; min-height: 110px; }
   .eyebrow {
     margin: 0; display: inline-flex; align-items: center; gap: 6px;
     font: 700 12px/1 var(--rb-font-body); letter-spacing: .16em; text-transform: uppercase; color: var(--rb-gold);
@@ -131,6 +133,8 @@
   .why { margin: 0; color: var(--rb-muted); font-size: 14px; max-width: 46ch; }
 
   .pair { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 3vw, 28px); max-width: 620px; width: 100%; margin: 0 auto; }
+  /* shrink the posters on short screens so the answer buttons stay above the fold (≈680px of chrome around them) */
+  .vs:not(.compact) .pair { max-width: clamp(300px, calc((100svh - 680px) * 4 / 3 + 28px), 620px); }
   .side { margin: 0; position: relative; display: grid; gap: 10px; min-width: 0; transition: transform .18s ease, opacity .18s ease; }
   .side :global(.poster) { box-shadow: var(--rb-shadow); }
   .side.win { transform: translateY(-6px) scale(1.02); }
@@ -149,10 +153,19 @@
     text-shadow: 0 3px 18px rgba(0, 0, 0, .8), 0 0 2px rgba(0, 0, 0, .9);
   }
   figcaption { display: grid; gap: 2px; min-width: 0; }
-  .t { font-weight: 600; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
-  .m { font-size: 12.5px; color: var(--rb-muted); }
-  .unseen { justify-self: start; margin-top: 4px; font-size: 12.5px; color: var(--rb-faint); text-decoration: underline; text-underline-offset: 3px; }
-  .unseen:hover { color: var(--rb-text); }
+  /* always two lines tall (clamped), one-line meta: captions never change height, so neither do the buttons */
+  .t {
+    font-weight: 600; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; min-height: 2.5em;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  }
+  .m { font-size: 12.5px; color: var(--rb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* a small version of the "About the same" button */
+  .unseen {
+    justify-self: start; margin-top: 6px; display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 11px; border-radius: 9px; font-size: 12.5px; font-weight: 600; color: var(--rb-muted);
+    box-shadow: inset 0 0 0 1px var(--rb-line); transition: color .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .unseen:hover { color: var(--rb-text); background: var(--rb-surface-2); box-shadow: inset 0 0 0 1px var(--rb-line-strong); }
   .medal {
     position: absolute; left: 50%; top: calc(50% - 30px); transform: translate(-50%, -50%);
     width: 52px; height: 52px; border-radius: 50%;
@@ -162,6 +175,7 @@
     box-shadow: 0 0 0 6px color-mix(in srgb, var(--rb-bg) 60%, transparent);
   }
   .ladder { max-width: 620px; width: 100%; margin: 0 auto; }
+  .ladder.idle { visibility: hidden; }
 
   .answers { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; max-width: 620px; width: 100%; margin: 0 auto; }
   .ans {
@@ -173,8 +187,8 @@
   .ans:active { transform: scale(.97); }
   .ans.hi { background: var(--rb-up); color: var(--rb-up-ink); }
   .ans.hi:hover { background: color-mix(in srgb, var(--rb-up) 88%, #fff); }
-  .ans.lo { background: var(--rb-surface-3); color: var(--rb-text); box-shadow: inset 0 0 0 1px var(--rb-line-strong); }
-  .ans.lo:hover { background: var(--rb-line-strong); }
+  .ans.lo { background: var(--rb-down); color: var(--rb-down-ink); }
+  .ans.lo:hover { background: color-mix(in srgb, var(--rb-down) 88%, #fff); }
   .ans.same { background: transparent; color: var(--rb-muted); box-shadow: inset 0 0 0 1px var(--rb-line); font-weight: 600; font-size: 14px; }
   .ans.same:hover { color: var(--rb-text); }
 
@@ -188,6 +202,7 @@
   .keys { font-size: 12px; color: var(--rb-faint); margin-left: 8px; }
 
   .compact { gap: 14px; }
+  .compact .head { min-height: 90px; }
   .compact .ask { font-size: 18px; }
   .compact .pair { max-width: 380px; }
   .compact .medal { width: 42px; height: 42px; font-size: 15px; }
@@ -195,14 +210,22 @@
 
   @media (max-width: 560px) {
     .vs { gap: 12px; }
+    .head { min-height: 86px; }
     .ask { font-size: 17px; }
     .why { font-size: 13px; }
     .pair { max-width: 290px; gap: 14px; }
+    .vs:not(.compact) .pair { max-width: clamp(220px, calc((100svh - 645px) * 4 / 3 + 14px), 290px); }
     .t { font-size: 13.5px; }
     .m { font-size: 11.5px; }
-    .unseen { font-size: 11.5px; margin-top: 2px; }
+    .unseen { font-size: 11.5px; margin-top: 4px; padding: 5px 9px; }
     .badge.rank { font-size: 36px; }
     .answers { grid-template-columns: 1fr 1fr; }
+    /* docked just above the app's bottom tab bar when the card runs past the screen */
+    .vs:not(.compact) .answers {
+      position: sticky; z-index: 5; bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+      padding-top: 10px; margin-top: -10px;
+      background: linear-gradient(to top, var(--rb-bg) 80%, transparent);
+    }
     .ans.same { grid-column: 1 / -1; order: 3; min-height: 42px; }
     .keys { display: none; }
     .medal { width: 42px; height: 42px; font-size: 15px; }

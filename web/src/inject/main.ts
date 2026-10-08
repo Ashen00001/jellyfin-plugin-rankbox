@@ -61,40 +61,54 @@ function placeHome(a: Auth) {
 
 /* ---------------- badge on detail pages ---------------- */
 
-let badgeFor = '';
+// last answer from /RankBox/Badge (null = not ranked), reused for a minute so page re-renders don't refetch
+let badgeData: { id: string; at: number; b: any } | null = null;
+let badgeLoading = '';
 async function placeBadge(a: Auth) {
   const m = route().match(/^\/details\?(?:.*&)?id=([0-9a-f]{32})/i);
-  const page = document.querySelector<HTMLElement>('.itemDetailPage:not(.hide)');
-  const anchor = page?.querySelector<HTMLElement>('.itemMiscInfo-primary');
-  if (!m || !anchor) return;
+  if (!m) return;
   const id = m[1].toLowerCase();
-  const existing = page!.querySelector<HTMLElement>('.rankbox-badge');
+  const find = () => {
+    const page = document.querySelector<HTMLElement>('.itemDetailPage:not(.hide)');
+    return { page, anchor: page?.querySelector<HTMLElement>('.itemMiscInfo-primary') };
+  };
+  let { page, anchor } = find();
+  if (!page || !anchor) return;
+  const existing = page.querySelector<HTMLElement>('.rankbox-badge');
   if (existing && existing.dataset.id === id) return;
   existing?.remove();
-  if (badgeFor === id + '…') return;
-  badgeFor = id + '…';
-  try {
-    const r = await fetch(`${a.base}/RankBox/Badge?itemId=${id}`, { headers: { Authorization: `MediaBrowser Token="${a.token}"` } });
-    const b = r.ok ? await r.json() : null;
-    badgeFor = id;
-    if (!b || !b.rank || route().indexOf(id) < 0) return;
-    const { host, root } = shadowHost('rankbox-badge', 'span');
-    host.dataset.id = id;
-    host.style.cssText = 'display:inline-block;margin:.2em 0 .6em;';
-    const tierColor = `var(--rb-tier-${b.tier})`;
-    root.innerHTML += `<style>
-      a{display:inline-flex;align-items:center;gap:10px;padding:5px 12px 5px 6px;border-radius:99px;text-decoration:none;
-        background:rgba(12,15,20,.6);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
-        font:600 14px/1 var(--rb-font-body);color:var(--rb-text)}
-      a:hover{box-shadow:inset 0 0 0 1px var(--rb-gold)}
-      .t{display:grid;place-items:center;min-width:26px;height:26px;border-radius:7px;background:${tierColor};color:#12100c;font:900 17px/1 var(--rb-font-display)}
-      .n{font:900 22px/1 var(--rb-font-display);color:var(--rb-gold)}
-      .s{color:var(--rb-muted);font-weight:500}</style>
-      <a href="${a.base}/RankBox/App?list=${b.list}#ranking" title="Open RankBox"><span class="t">${b.tier}</span>
-      <span class="n">#${b.rank}</span><span>in your ${b.list === 'movies' ? 'movies' : b.list === 'series' ? 'shows' : 'list'}</span>
-      <span class="s">· ${Number(b.score).toFixed(1)}</span></a>`;
-    anchor.after(host);
-  } catch { badgeFor = ''; }
+  if (!badgeData || badgeData.id !== id || Date.now() - badgeData.at > 60_000) {
+    if (badgeLoading === id) return;
+    badgeLoading = id;
+    try {
+      const r = await fetch(`${a.base}/RankBox/Badge?itemId=${id}`, { headers: { Authorization: `MediaBrowser Token="${a.token}"` } });
+      badgeData = { id, at: Date.now(), b: r.status === 200 ? await r.json() : null };
+    } catch {
+      badgeData = { id, at: Date.now(), b: null };
+    } finally {
+      badgeLoading = '';
+    }
+    ({ page, anchor } = find());
+    if (!page || !anchor || page.querySelector('.rankbox-badge')) return;
+  }
+  const b = badgeData.b;
+  if (!b || !b.rank || route().indexOf(id) < 0) return;
+  const { host, root } = shadowHost('rankbox-badge', 'span');
+  host.dataset.id = id;
+  host.style.cssText = 'display:inline-block;margin:.2em 0 .6em;';
+  const tierColor = `var(--rb-tier-${b.tier})`;
+  root.innerHTML += `<style>
+    a{display:inline-flex;align-items:center;gap:10px;padding:5px 12px 5px 6px;border-radius:99px;text-decoration:none;
+      background:rgba(12,15,20,.6);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+      font:600 14px/1 var(--rb-font-body);color:var(--rb-text)}
+    a:hover{box-shadow:inset 0 0 0 1px var(--rb-gold)}
+    .t{display:grid;place-items:center;min-width:26px;height:26px;border-radius:7px;background:${tierColor};color:#12100c;font:900 17px/1 var(--rb-font-display)}
+    .n{font:900 22px/1 var(--rb-font-display);color:var(--rb-gold)}
+    .s{color:var(--rb-muted);font-weight:500}</style>
+    <a href="${a.base}/RankBox/App?list=${b.list}#ranking" title="Open RankBox"><span class="t">${b.tier}</span>
+    <span class="n">#${b.rank}</span><span>in your ${b.list === 'movies' ? 'movies' : b.list === 'series' ? 'shows' : 'list'}</span>
+    <span class="s">· ${Number(b.score).toFixed(1)}</span></a>`;
+  anchor.after(host);
 }
 
 /* ---------------- banners (just finished / recency check) ---------------- */
@@ -168,18 +182,24 @@ function boot() {
     l.rel = 'stylesheet'; l.href = FONTS; l.dataset.rankboxFonts = '';
     document.head.append(l);
   }
-  let pending = 0;
+  // throttle, not debounce: a page that never stops changing (MediaBar's slideshow) would starve a debounce,
+  // and requestAnimationFrame never fires in a background tab
+  let pending = false;
+  const run = () => {
+    pending = false;
+    const a = auth();
+    if (!a) return;
+    placeHome(a);
+    void placeBadge(a);
+  };
   const tick = () => {
-    cancelAnimationFrame(pending);
-    pending = requestAnimationFrame(() => {
-      const a = auth();
-      if (!a) return;
-      placeHome(a);
-      void placeBadge(a);
-    });
+    if (pending) return;
+    pending = true;
+    setTimeout(run, 80);
   };
   new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('hashchange', tick);
+  setInterval(tick, 1500); // safety net for changes the observer can't see
   tick();
   const poll = () => { const a = auth(); if (a) void pollBanner(a); };
   setTimeout(poll, 6000);

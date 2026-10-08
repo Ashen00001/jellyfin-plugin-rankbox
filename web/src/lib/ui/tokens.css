@@ -16,6 +16,8 @@
   --rb-gold: #f4c55a;        /* rank numerals */
   --rb-up: #35cf7f;
   --rb-up-ink: #052414;
+  --rb-down: #f0605e;
+  --rb-down-ink: #2a0606;
   --rb-danger: #ef6a6a;
 
   /* tier colours follow the classic tier-list ladder, toned for dark backgrounds */

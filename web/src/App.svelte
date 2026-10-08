@@ -142,10 +142,11 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   @media (max-width: 700px) {
-    .top { gap: 10px; }
+    .top { gap: 10px; position: relative; }
     .seg { margin-left: 0; order: 3; width: 100%; }
     .seg button { flex: 1; }
-    .save { margin-left: auto; }
+    /* pinned in the corner: "Saved" popping in shouldn't push the page down */
+    .save { position: absolute; top: calc(2px + env(safe-area-inset-top, 0px)); right: 0; min-width: 0; font-size: 11px; }
     .tabs {
       position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; margin: 0;
       padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));

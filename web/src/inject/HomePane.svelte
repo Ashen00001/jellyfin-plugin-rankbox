@@ -79,7 +79,7 @@
       </div>
 
       <aside class="top">
-        <p class="k">Your top {top.length}</p>
+        <p class="k">{top.length > 1 ? `Your top ${top.length}` : 'Your top 5'}</p>
         {#each top as r (r.id)}
           {@const it = rb.item(r.id)!}
           <a class="row" href={rb.backend.jellyfinUrl() + '#/details?id=' + r.id}>

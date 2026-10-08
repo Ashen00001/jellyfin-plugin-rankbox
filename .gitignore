@@ -5,3 +5,5 @@ obj/
 # never commit server credentials
 *.key
 secrets.*
+
+.dev/
