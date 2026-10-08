@@ -46,6 +46,9 @@ public static class WebInjector
                             { "callbackMethod", method },
                         },
                     });
+                    // use the exact names: File Transformation runs only the exact-name pipeline when one exists
+                    // (other plugins register "index.html" too). The names also work as regexes, so "index.html" reaches
+                    // Jellyfin's "*-index-html.chunk.js" files as well; both transforms leave anything that isn't their file alone
                     Add("8a3d9c51-6b0e-4f6a-9d6e-6c1f0b2a7e31", "index.html", nameof(TransformIndex));
                     Add("5c1f7e62-2d4b-4b8e-8f0a-3b9d6e2c1a47", "config.json", nameof(TransformConfig));
                     log.LogInformation("RankBox: hooked into Jellyfin web via File Transformation");
@@ -64,21 +67,25 @@ public static class WebInjector
     public static string TransformIndex(PatchRequestPayload payload)
     {
         var html = payload.Contents ?? string.Empty;
-        if (html.Contains(Marker, StringComparison.Ordinal))
+        var at = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+        // only ever touch the real page: anything without a </body> (e.g. a JS chunk) is left exactly as it was
+        if (at < 0 || html.Contains(Marker, StringComparison.Ordinal))
         {
             return html;
         }
 
-        var tag = $"<script type=\"module\" {Marker} src=\"../RankBox/inject.js?v={Version}\"></script>";
-        var at = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        return at >= 0 ? html.Insert(at, tag) : html + tag;
+        return html.Insert(at, $"<script type=\"module\" {Marker} src=\"../RankBox/inject.js?v={Version}\"></script>");
     }
 
     public static string TransformConfig(PatchRequestPayload payload)
     {
         try
         {
-            var root = JsonNode.Parse(payload.Contents ?? "{}") as JsonObject ?? new JsonObject();
+            if (JsonNode.Parse(payload.Contents ?? string.Empty) is not JsonObject root || root["menuLinks"] is not (null or JsonArray))
+            {
+                return payload.Contents ?? string.Empty;
+            }
+
             var links = root["menuLinks"] as JsonArray ?? new JsonArray();
             if (!links.Any(l => l?["name"]?.GetValue<string>() == "RankBox"))
             {
