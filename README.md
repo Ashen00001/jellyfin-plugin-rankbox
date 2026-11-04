@@ -4,6 +4,14 @@ Rank your shows and movies by comparing them head to head, right inside Jellyfin
 
 RankBox asks one thing at a time: **"Rate *X* higher or lower than *Y*?"**. Every answer feeds a rating model, so each title gets a **score**, a **tier** (S–D) and a **confidence** level. You can tap "about the same", and RankBox finds contradictions and asks again. A recency check later re-asks answers you gave right after a binge, so last week's show doesn't float to the top just for being fresh.
 
+![Rank: head-to-head questions, with a recency check](docs/rank.png)
+
+| Ranking | Tiers | Insights |
+|---|---|---|
+| ![Ranking leaderboard with scores and confidence](docs/ranking.png) | ![Tier list with draggable posters](docs/tiers.png) | ![Insights: recency bias, confidence, taste](docs/insights.png) |
+
+_Screenshots use the built-in demo library with sample titles, not a real Jellyfin server._
+
 ## Features
 
 **Rank**
