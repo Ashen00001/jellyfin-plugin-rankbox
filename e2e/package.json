@@ -1,0 +1,10 @@
+{
+  "name": "rankbox-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Browser tests for the RankBox plugin, driven by scripts/e2e.ps1",
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

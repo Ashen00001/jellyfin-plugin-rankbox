@@ -83,6 +83,8 @@ npm run build    # -> web/dist, embedded into the plugin
 
 **Local install:** `deploy.ps1` runs the tests, builds both parts, installs into a local Jellyfin and restarts it.
 
+**End-to-end test:** `scripts/e2e.ps1` builds the plugin, boots a throwaway Jellyfin on port 8097 (own data dir in `.e2e/`, never your normal server), seeds it with a fake library and two test users, and drives the web UI with Playwright (`e2e/`). Prints `VERIFY rankbox-e2e PASS checks=<n>` or `FAIL <reason>`. Set `JELLYFIN_DIR` if Jellyfin is not in the default install folder. Screenshots land in `.e2e/artifacts/`.
+
 ## API
 
 All endpoints need a signed-in user, except the app files.
